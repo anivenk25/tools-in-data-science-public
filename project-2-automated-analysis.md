@@ -97,7 +97,7 @@ Notes:
 
 ## Submit your script
 
-- Create a new repository in your GitHub account. (Create one if required.)
+- Create a new public repository in your GitHub account with an MIT license.
 - Add your code: `autolysis.py`
 - Create directories called `goodreads/`, `happiness/`, and `media/`.
 - Run your script on the respective CSV files and commit the **output** in that directory. (Don't commit the input CSVs. Just `README.md` and `*.png` files.)
@@ -108,8 +108,9 @@ Notes:
 
 Here is how your script will be evaluated. Try this yourself to guess your score.
 
-## Submission (3 marks)
+### Submission (4 marks)
 
+- 1 mark: **REQUIRED**: If your repository is public and has an [MIT License](https://docs.github.com/en/communities/setting-up-your-project-for-healthy-contributions/adding-a-license-to-a-repository). **NOTE** If you don't make your repo public or add an MIT license, the code will not be evaluated.
 - 1 mark: If the repository has the required files
   - 0.4: `autolysis.py`
   - 0.1: `goodreads/README.md`
@@ -124,7 +125,7 @@ Here is how your script will be evaluated. Try this yourself to guess your score
   - 0.5: If `uv run autolysis.py media.csv` runs without errors and creates `README.md` and `*.png`
   - 0.5: If all the above run without errors and create the correct files (bonus)
 
-### Code (6 marks)
+### Code (7 marks)
 
 Your code is passed to an LLM. You get marks as follows:
 
@@ -133,7 +134,8 @@ Your code is passed to an LLM. You get marks as follows:
 - 1 mark: If code uses appropriate visualization types, enhances charts with titles, axis labels, legends, and annotations, and uses colors effectively.
 - 1 mark: If code crafts clear, context-rich prompts to guide the LLM on the narrative, includes relevant results, ensures proper Markdown formatting, logically sequences the narratives (data description, analysis, insights, implications), integrates visualizations at the right places, and prompts the LLM to emphasie significant findings and implications.
 - 1 mark: If code makes uses LLMs efficiently, minimizing token usage by avoiding sending large data and using concise prompts.
-- 1 mark: If code uses dynamic prompts, function calling, vision capabilities, and multiple calls to LLMs (agentic workflows).
+- 1 mark: If code uses dynamic prompts and function calling
+- 1 mark: If code uses vision capabilities and multiple calls to LLMs (agentic workflows).
 
 We don't know the exact prompts we will use for this. We won't share these either. But this gives you an idea of what we're looking for.
 
@@ -151,11 +153,16 @@ The LLM will review your `README.md` and `*.png` files on these criteria:
 - 1 mark: If the analysis demonstrates a deep understanding of the data, utilizing appropriate statistical methods and uncovering meaningful insights.
 - 1 mark: If the PNG images are relevant, well-designed, and enhance the narrative by effectively illustrating key findings.
 
-### Bonus marks
+**REMEMBER**: LLMs give different results each time. Just because it worked for you doesn't mean it'll work when we evaluate it. So be robust in your prompts and code.
 
-- **Code diversity is encouraged**. You're welcome to copy code and learn from each other. But we encourage diversity too. We will use code embedding similarity (via `text-embedding-3-small`, dropping comments and docstrings) and give up to 5 bonus marks for most unique responses. (That is, if your response is similar to a lot of others, you lose up to 5 marks.)
-- **Engaging and interesting**. We'll read your output. If it tugs at our hearts or blows our minds, we'll give up to 3 bonus marks to a few lucky students.
-- **Normalization**. Clearly, adding all this up won't total to 20 marks. We'll normalize the marks to a maximum of 20.
+### Bonus marks (12 marks)
+
+- 8 marks: **Code diversity**. You're welcome to copy code and learn from each other. But we encourage diversity too. We will use code embedding similarity (via `text-embedding-3-small`, dropping comments and docstrings) and give up to 5 bonus marks for most unique responses. (That is, if your response is similar to a lot of others, you lose these marks.)
+- 4 marks: **Engaging and interesting**. We'll read your output. If it tugs at our hearts or blows our minds, we'll give bonus marks to a few lucky students.
+
+**Prompt injection is fine**. LLMs can be coerced via prompt injection. You're welcome to try it. We'll try hard with our prompts to reduce this possibility. But if you succeed, you deserve your marks.
+
+**Normalization**. Clearly, adding all this up won't total to 20 marks. We'll normalize the marks to a maximum of 20.
 
 ## Deadline
 
