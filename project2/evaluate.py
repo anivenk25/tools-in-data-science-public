@@ -102,7 +102,7 @@ def clone_latest_branch(id: str, head: HEAD, deadline: datetime):
 
     # Get the latest commit before the deadline
     log_cmd = ["git", "-C", repo_path, "log", "-q", head.branch]
-    log_cmd.extend(["--before", deadline.isoformat(), "--format=%H", "-n", "1"])
+    log_cmd.extend(["--before", deadline.isoformat(), "--format=%H", "-n", "1", "--"])
     log(f"[blue]{id}[/blue] [yellow]LOG[/yellow] {repo_url}")
     commit = run(log_cmd, stdout=PIPE, text=True, check=True).stdout.strip()
 
