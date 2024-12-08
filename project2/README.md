@@ -1,5 +1,7 @@
 # Project 2
 
+**WARNING**: This is **work-in-progress** evaluation code for [Project 2](../project-2-automated-analysis.md).
+
 ## Usage
 
 To evaluate your own submission on the Windows Command Prompt:
@@ -39,8 +41,7 @@ docker run --name tds-sep-2024-project-2 -v .:/project2 -it ubuntu:24.04
 ... or attach to an existing container:
 
 ```bash
-docker start tds-sep-2024-project-2
-docker attach tds-sep-2024-project-2
+docker start tds-sep-2024-project-2 && docker attach tds-sep-2024-project-2
 ```
 
 In the container, run:

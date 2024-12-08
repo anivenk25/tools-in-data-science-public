@@ -10,24 +10,41 @@
 # ///
 
 import argparse
+import dotenv
 import glob
 import httpx
+import json
 import os
 import pandas as pd
+import shutil
 import sys
-import dotenv
 from datetime import datetime, timedelta, timezone
-from collections import namedtuple
+from collections import namedtuple, Counter
 from platformdirs import user_data_dir
 from rich.console import Console
 from subprocess import run, PIPE
 
+# Deadline for repo is 12 Dec 2024 EOD AOE. If you're hacking dates, remember:
+# 1. Change your commit time to before the deadline
+# 2. We'll clone at some unknown time after this deadline. Time it before that.
+deadline = datetime(2024, 12, 12, 23, 59, 59, tzinfo=timezone(timedelta(hours=-12)))
 
-dotenv.load_dotenv()
 console = Console()
 root = user_data_dir("tds-sep-24-project-2", "tds")
 HEAD = namedtuple("HEAD", ["owner", "repo", "branch"])
-Eval = namedtuple("Eval", ["marks", "total", "test"])
+Eval = namedtuple("Eval", ["marks", "total", "test", "reason"])
+
+# Faculty evaluation of code and output will use LLM Foundry. Student evaluation will use AIProxy.
+dotenv.load_dotenv()
+if "LLMFOUNDRY_TOKEN" in os.environ:
+    headers = {"Authorization": f"Bearer {os.environ['LLMFOUNDRY_TOKEN']}:tds-sep-2024-project-2"}
+    openai_api_base = "https://llmfoundry.straive.com/openai/v1"
+elif "AIPROXY_TOKEN" in os.environ:
+    headers = {"Authorization": f"Bearer {os.environ['AIPROXY_TOKEN']}"}
+    openai_api_base = "https://aiproxy.sanand.workers.dev/openai/v1"
+else:
+    raise ValueError("Missing AIPROXY_TOKEN")
+
 
 # Sample datasets from https://drive.google.com/drive/folders/1KNGfcgA1l2uTnqaldaX6LFr9G1RJQNK3
 sample_datasets = {
@@ -39,7 +56,7 @@ sample_datasets = {
 
 def log(msg: str, last=False):
     """Log a message to the console."""
-    console.print(" " * 80, end="\r")
+    console.print(" " * 200, end="\r")
     console.print(msg, **({} if last else {"end": "\r"}))
 
 
@@ -50,8 +67,8 @@ def download_datasets():
     for name, id in sample_datasets.items():
         target = os.path.join(datasets_dir, name)
         if not os.path.exists(target) or os.path.getsize(target) == 0:
-            log(f"Downloading {name}...")
             url = f"https://drive.usercontent.google.com/download?id={id}"
+            log(f"[yellow]DOWNLOAD[/yellow] {name}...")
             result = httpx.get(url, timeout=30)
             result.raise_for_status()
             with open(target, "wb") as f:
@@ -69,72 +86,39 @@ def parse_github_url(raw_url: str) -> HEAD:
         return HEAD(parts[3], parts[4], parts[5])
 
 
-def clone_latest_branch(id: str, head: HEAD, deadline: datetime, reload=False):
+def clone_latest_branch(id: str, head: HEAD, deadline: datetime):
     """Ensure the latest commit on the branch is before the deadline."""
     repo_path = os.path.join(root, id)
-    if os.path.exists(repo_path) and not reload:
-        return
 
-    # Clone or fetch the repo
+    # Clean up the repo if it exists to avoid problems with forced pushes.
+    if os.path.exists(repo_path):
+        shutil.rmtree(repo_path)
+
+    # Clone the repo
     repo_url = f"https://github.com/{head.owner}/{head.repo}.git"
-    kwargs = {"check": True, "capture_output": True, "text": True, "env": {"GIT_TERMINAL_PROMPT": "0"}}
-    if not os.path.exists(repo_path):
-        cmd = ["git", "clone", "-q", "--single-branch", "-b", head.branch, repo_url, repo_path]
-        run(cmd, **kwargs)
-    else:
-        run(["git", "-C", repo_path, "fetch", "--quiet", "origin", head.branch], **kwargs)
-        run(["git", "-C", repo_path, "checkout", "--quiet", head.branch], **kwargs)
+    cmd = ["git", "clone", "-q", "--single-branch", "-b", head.branch, repo_url, repo_path]
+    log(f"[blue]{id}[/blue] [yellow]CLONE[/yellow] {repo_url}")
+    run(cmd, check=True, capture_output=True, text=True, env={"GIT_TERMINAL_PROMPT": "0"})
 
     # Get the latest commit before the deadline
-    log_cmd = [
-        "git",
-        "-C",
-        repo_path,
-        "log",
-        "-q",
-        head.branch,
-        "--before",
-        deadline.isoformat(),
-        "--format=%H",
-        "-n",
-        "1",
-    ]
+    log_cmd = ["git", "-C", repo_path, "log", "-q", head.branch]
+    log_cmd.extend(["--before", deadline.isoformat(), "--format=%H", "-n", "1"])
+    log(f"[blue]{id}[/blue] [yellow]LOG[/yellow] {repo_url}")
     commit = run(log_cmd, stdout=PIPE, text=True, check=True).stdout.strip()
 
     # Checkout the commit
     if commit:
+        log(f"[blue]{id}[/blue] [yellow]CHECKOUT[/yellow] {commit}")
         run(["git", "-C", repo_path, "checkout", "--quiet", commit], check=True)
     else:
         raise ValueError(f"No commits on branch {head.branch} before {deadline}")
 
 
-def clone_all_submissions(submissions: pd.DataFrame, reload=False):
-    """Clone all submissions from a spreadsheet with a timestamp, email, GitHub URL."""
-
-    # Deadline for repo is 12 Dec 2024 EOD AOE. If you're hacking dates, remember:
-    # 1. Change your commit time to before the deadline
-    # 2. We'll clone at some unknown time after this deadline. Time it before that.
-    deadline = datetime(2024, 12, 12, 23, 59, 59, tzinfo=timezone(timedelta(hours=-12)))
-
-    submissions["id"] = submissions[submissions.columns[1]].str.split("@").str[0]
-    submissions["head"] = submissions[submissions.columns[2]].apply(parse_github_url)
-    for _, row in submissions.iterrows():
-        head = row["head"]
-        msg = f"{row.id}: {head.owner}/{head.repo}:{head.branch}"
-        try:
-            console.print(" " * 80, end="\r")
-            console.print(f"[yellow]CLONE[/yellow] {msg}", end="\r")
-            clone_latest_branch(row.id, head, deadline, reload)
-        except Exception as e:
-            console.print(f"[red]CLONE FAILED[/red] {msg}: {e}")
-            continue
-
-
 def has_mit_license(id: str, evals: list[Eval]) -> bool:
     """Check if root/{id}/LICENSE is an MIT license."""
     with open(os.path.join(root, id, "LICENSE")) as f:
-        mark = 1.0 if "permission is hereby granted, free of charge" in f.read().lower() else 0.0
-        evals.append(Eval(mark, 1.0, "1.0. Public repo with MIT LICENSE"))
+        marks = 1.0 if "permission is hereby granted, free of charge" in f.read().lower() else 0.0
+        evals.append(Eval(marks, 1.0, "mit_license", "present" if marks else "missing"))
 
 
 def has_required_files(id: str, evals: list[Eval]):
@@ -150,65 +134,159 @@ def has_required_files(id: str, evals: list[Eval]):
     }
     for index, (pattern, total) in enumerate(required_files.items()):
         marks = total if glob.glob(os.path.join(root, id, pattern)) else 0.0
-        evals.append(Eval(marks, total, f"2.{index + 1}. Repo has {pattern}"))
+        evals.append(Eval(marks, total, pattern, "present" if marks else "missing"))
 
 
-def run_evaluation(id: str, dataset: str, evals: list[Eval]):
-    log(f"{id}: [yellow]uv run autolysis[/yellow] {dataset}")
+def run_on_dataset(id: str, dataset: str, evals: list[Eval]):
+    msg = f"[blue]{id}[/blue] [yellow]uv run autolysis[/yellow] {dataset}"
     cwd = os.path.join(root, id, "eval", dataset)
     os.makedirs(cwd, exist_ok=True)
     script = os.path.join(root, id, "autolysis.py")
     cmd = ["uv", "run", script, os.path.join(root, "datasets", dataset)]
+    log(msg)
     result = run(cmd, check=False, capture_output=True, text=True, cwd=cwd)
     if result.returncode != 0:
-        evals.append(Eval(0.0, 0.5, f"3. uv run autolysis {dataset} failed: {result.stderr}"))
-        log(f"{id}: [red]uv run autolysis[/red] {dataset} failed: {result.stderr}", last=True)
+        evals.append(Eval(0.0, 0.5, msg, result.stderr))
+        log(f"{msg} [red]FAIL[/red]: {result.stderr}", last=True)
+        return False
     else:
-        evals.append(Eval(0.5, 0.5, f"3. uv run autolysis {dataset} succeeded"))
+        evals.append(Eval(0.5, 0.5, f"uv run autolysis {dataset}", "ran"))
+        return True
+
+
+# Define the code quality evaluation attributes. WARNING: This is work in progress.
+Qual = namedtuple("Qual", ["group", "name", "description"])
+code_system = """
+You are an expert Python programmer. Evaluate the quality of this Python code. Respond as JSON.
+For each code quality attribute:
+- FIRST explain your reasoning, citing code blocks that provide evidence for and against the attribute.
+- THEN answer as a boolean. Use your judgement critically using your reasoning. Prefer false if unsure.
+"""
+
+# The criteria are mentioned in the project description. But the exact prompts are a secret.
+# But here are a few examples:
+# 1|uses_functions|Is the code broken down into functions APTLY, to avoid code duplication, reduce complexity, and improve re-use?
+# 1|consistent_coding_style|Is the ENTIRE code written in a consistent style?
+# 5|concise_prompts|Are prompts concise, entity-dense, and to the point, rather than unnecessarily verbose or repetitive?
+code_quality = []
+for line in os.environ.get("CODE_QUALITY", "").split("\n"):
+    if not line.strip() or line.startswith("#"):
+        continue
+    group, name, description = line.split("|", 2)
+    code_quality.append(Qual(group, name, description))
+
+# Attributes belong to one of 7 groups (as defined in the project description). Count them.
+code_quality_group_counts = Counter(attribute.group for attribute in code_quality)
+
+# Define the JSON schema for the code quality evaluation. {attribute.name: {reasoning, answer}}
+# Put reasoning first to avoid rationalization bias.
+code_quality_properties = {
+    attribute.name: {
+        "type": "object",
+        "description": attribute.description,
+        "properties": {"reasoning": {"type": "string"}, "answer": {"type": "boolean"}},
+        "required": ["reasoning", "answer"],
+        "additionalProperties": False,
+    }
+    for attribute in code_quality
+}
+code_quality_schema = {
+    "type": "object",
+    "properties": code_quality_properties,
+    "required": list(code_quality_properties.keys()),
+    "additionalProperties": False,
+}
+json_schema = {"name": "quality", "strict": True, "schema": code_quality_schema}
+
+
+def evaluate_code_quality(id: str, evals: list[Eval]):
+    # Students won't have access to code quality criteria (for now). Skip if so
+    if not len(code_quality):
+        return
+
+    # Read the code
+    with open(os.path.join(root, id, "autolysis.py")) as f:
+        code = f.read()
+
+    # Evaluate the code quality
+    log(f"[blue]{id}[/blue] [yellow]CODE QUALITY[/yellow]")
+    result = httpx.post(
+        f"{openai_api_base}/chat/completions",
+        headers=headers,
+        json={
+            "model": os.environ.get("MODEL", "gpt-4o-mini"),
+            "messages": [
+                {"role": "system", "content": code_system},
+                {"role": "user", "content": code},
+            ],
+            "response_format": {"type": "json_schema", "json_schema": json_schema},
+        },
+        timeout=60,
+    )
+    answers = json.loads(result.json()["choices"][0]["message"]["content"])
+    for attribute in code_quality:
+        total = 1.0 / code_quality_group_counts[attribute.group]
+        ans = answers[attribute.name]
+        evals.append(Eval(total if ans["answer"] else 0, total, attribute.name, ans["reasoning"]))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate student project submissions")
-    parser.add_argument("url", nargs="?", help="GitHub raw URL for a single submission")
-    parser.add_argument("--reload", action="store_true", help="Force reload repositories")
+    parser.add_argument("url", nargs="*", help="GitHub raw URL for submission(s)")
     args = parser.parse_args()
 
     # If a URL is passed, get submission from that
-    if args.url:
-        submissions = pd.DataFrame([[None, "me", args.url]])
+    if len(args.url):
+        submissions = []
+        for url in args.url:
+            head = parse_github_url(url)
+            submissions.append([None, f"{head.owner}-{head.repo}", url])
+        submissions = pd.DataFrame(submissions)
     # Else, the faculty will get all submissions from the Google Sheet and evaluate
     elif os.environ.get("SUBMISSION_URL"):
         submissions = pd.read_csv(os.environ["SUBMISSION_URL"])
     # Else, raise an error
     else:
-        log(
-            "[red]Missing URL[/red]: Usage `uv run project2.py https://raw.githubusercontent.com/...`",
-            last=True,
-        )
+        error = "[red]Missing URL[/red]: Usage `uv run project2.py https://raw.githubusercontent.com/...`"
+        log(error, last=True)
         sys.exit(1)
 
     download_datasets()
-    clone_all_submissions(submissions, args.reload)
+
+    submissions["id"] = submissions[submissions.columns[1]].str.split("@").str[0]
+    submissions["head"] = submissions[submissions.columns[2]].apply(parse_github_url)
 
     # Now, evalute each submission
     results = []
-    for id in submissions["id"].tolist():
+    for _, row in submissions.iterrows():
         evals = []
-        log(f"Evaluating {id}...")
         try:
-            log(f"[yellow]EVAL[/yellow] {id}")
-            has_mit_license(id, evals)
-            has_required_files(id, evals)
+            clone_latest_branch(row.id, row["head"], deadline)
+            has_mit_license(row.id, evals)
+            has_required_files(row.id, evals)
+
+            # Code evaluation
+            evaluate_code_quality(row.id, evals)
+
+            # Submission: Run evaluation for each sample dataset
+            success = []
             for dataset in sample_datasets:
-                run_evaluation(id, dataset, evals)
-            evals.append(Eval(0.5, 0.5, "3. uv run autolysis * succeeded"))
+                success.append(run_on_dataset(row.id, dataset, evals))
+            if all(success):
+                evals.append(Eval(0.5, 0.5, "uv run autolysis *", "ran"))
+            else:
+                evals.append(Eval(0.0, 0.5, "uv run autolysis *", "failed"))
 
             result = pd.DataFrame(evals)
-            result["id"] = id
+            result["id"] = row.id
             results.append(result)
-            log(
-                f"[green]SCORE[/green] {id} {result.marks.sum()} / {result.total.sum()}", last=True
-            )
+            score, total = round(result.marks.sum(), 2), round(result.total.sum(), 2)
+            log(f"[blue]{row.id}[/blue] [green]SCORE[/green] {score} / {total}", last=True)
         except Exception as e:
-            log(f"[red]EVAL FAILED[/red] {e}", last=True)
+            log(f"[blue]{row.id}[/blue] [red]FAIL[/red] {e}", last=True)
             continue
+
+    if len(results):
+        results = pd.concat(results)
+        results.to_csv(os.path.join(root, "results.csv"), index=False)
+        print(results)

@@ -12,3 +12,6 @@ questions/*.pdf
 questions/temp*
 all-questions.md
 project_1/output/
+
+# Project 2
+project2/results.csv
