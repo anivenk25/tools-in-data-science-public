@@ -98,7 +98,8 @@ def clone_latest_branch(id: str, head: HEAD, deadline: datetime):
     repo_url = f"https://github.com/{head.owner}/{head.repo}.git"
     cmd = ["git", "clone", "-q", "--single-branch", "-b", head.branch, repo_url, repo_path]
     log(f"[blue]{id}[/blue] [yellow]CLONE[/yellow] {repo_url}")
-    run(cmd, check=True, capture_output=True, text=True, env={"GIT_TERMINAL_PROMPT": "0"})
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    run(cmd, check=True, capture_output=True, text=True, env=env)
 
     # Get the latest commit before the deadline
     log_cmd = ["git", "-C", repo_path, "log", "-q", head.branch]
