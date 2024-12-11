@@ -199,10 +199,21 @@ For each code quality attribute:
 
 # The criteria are mentioned in the project description. But the exact prompts are a secret.
 # But here are a few examples:
-# 1|uses_functions|Is the code broken down into functions APTLY, to avoid code duplication, reduce complexity, and improve re-use?
-# 1|consistent_coding_style|Is the ENTIRE code written in a consistent style?
-# 5|concise_prompts|Are prompts concise, entity-dense, and to the point, rather than unnecessarily verbose or repetitive?
-code_quality = convert_to_qual(os.environ.get("CODE_QUALITY", ""))
+code_quality = convert_to_qual(
+    os.environ.get(
+        "CODE_QUALITY",
+        """
+# THIS IS NOT THE EXACT WORDING. But they give you an idea of what we're looking for.
+1|well_structured|Is the code well structured, logically organized, with appropriate use of functions, clear separation of concerns, consistent coding style, meaningful variable names, proper indentation, and sufficient commenting for understandability?
+2|analysis|Does the code use robust analytical techniques? Statistical methods, comprehensiveness of analysis, innovative analytical techniques, and dynamic analysis based on data exploration?
+3|visualization|Does the code use appropriate visualization types, enhances charts with titles, axis labels, legends, and annotations, and uses colors effectively?
+4|narrative|Does the code craft clear, context-rich prompts to guide the LLM on the narrative, includes relevant results, ensures proper Markdown formatting, logically sequences the narratives (data description, analysis, insights, implications), integrates visualizations at the right places, and prompts the LLM to emphasie significant findings and implications?
+5|efficient|Does the code make use LLMs efficiently, minimizing token usage by avoiding sending large data and using concise prompts?
+6|dynamic|Does the code use dynamic prompts and function calling?
+7|vision_agentic|Does the code use vision capabilities and multiple calls to LLMs (agentic workflows)?
+""",
+    )
+)
 
 # Attributes belong to one of 7 groups (as defined in the project description). Count them.
 code_quality_group_counts = Counter(attribute.group for attribute in code_quality)
@@ -212,10 +223,6 @@ code_quality_schema = {"name": "quality", "strict": True, "schema": get_schema(c
 
 
 def evaluate_code_quality(id: str, evals: list[Eval]):
-    # Students won't have access to code quality criteria (for now). Skip if so
-    if not len(code_quality):
-        return
-
     # Read the code
     with open(os.path.join(root, id, "autolysis.py")) as f:
         code = f.read()
@@ -239,7 +246,8 @@ def evaluate_code_quality(id: str, evals: list[Eval]):
     for attribute in code_quality:
         total = 1.0 / code_quality_group_counts[attribute.group]
         ans = answers[attribute.name]
-        evals.append(Eval(total if ans["answer"] else 0, total, attribute.name, ans["reasoning"]))
+        attr = f"code: {attribute.name}"
+        evals.append(Eval(total if ans["answer"] else 0, total, attr, ans["reasoning"]))
 
 
 # Define the output quality evaluation attributes. WARNING: This is work in progress.
@@ -251,8 +259,18 @@ For each output quality attribute:
 - THEN answer as a boolean. Use your judgement critically using your reasoning. Prefer false if unsure.
 """
 
-# The criteria are mentioned in the project description. But the exact prompts are a secret.
-output_quality = convert_to_qual(os.environ.get("OUTPUT_QUALITY", ""))
+# The criteria are mentioned in the project description
+output_quality = convert_to_qual(
+    os.environ.get(
+        "OUTPUT_QUALITY",
+        """
+# THIS IS NOT THE EXACT WORDING. But they give you an idea of what we're looking for.
+1|well_structured|Is `README.md` well-structured, using headers, lists, and emphasis appropriately? Does the narrative clearly describe the data, analysis performed, insights gained, and implications?
+2|analysis|Does the analysis demonstrate a deep understanding of the data, utilizing appropriate statistical methods and uncovering meaningful insights?
+3|visualization|Are the PNG images relevant, well-designed, and enhance the narrative by effectively illustrating key findings?
+""",
+    )
+)
 output_quality_group_counts = Counter(attribute.group for attribute in output_quality)
 output_quality_schema = {"name": "quality", "strict": True, "schema": get_schema(output_quality)}
 
@@ -350,7 +368,7 @@ if __name__ == "__main__":
             success = []
             for dataset in sample_datasets:
                 try:
-                    # success.append(run_on_dataset(row.id, dataset, evals))
+                    success.append(run_on_dataset(row.id, dataset, evals))
                     evaluate_output_quality(row.id, os.path.join("eval", dataset), evals)
                 except Exception as e:
                     log(f"[blue]{row.id}[/blue] [red]FAIL[/red] {e}", last=True)
