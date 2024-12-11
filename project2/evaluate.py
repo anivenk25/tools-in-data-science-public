@@ -200,7 +200,7 @@ For each code quality attribute:
 # The criteria are mentioned in the project description. But the exact prompts are a secret.
 # But here are a few examples:
 code_quality = convert_to_qual(
-    os.environ.get(
+    os.getenv(
         "CODE_QUALITY",
         """
 # THIS IS NOT THE EXACT WORDING. But they give you an idea of what we're looking for.
@@ -233,7 +233,7 @@ def evaluate_code_quality(id: str, evals: list[Eval]):
         f"{openai_api_base}/chat/completions",
         headers=headers,
         json={
-            "model": os.environ.get("MODEL", "gpt-4o-mini"),
+            "model": os.getenv("MODEL", "gpt-4o-mini"),
             "messages": [
                 {"role": "system", "content": code_system},
                 {"role": "user", "content": code},
@@ -261,7 +261,7 @@ For each output quality attribute:
 
 # The criteria are mentioned in the project description
 output_quality = convert_to_qual(
-    os.environ.get(
+    os.getenv(
         "OUTPUT_QUALITY",
         """
 # THIS IS NOT THE EXACT WORDING. But they give you an idea of what we're looking for.
@@ -303,7 +303,7 @@ def evaluate_output_quality(id: str, path: str, evals: list[Eval]):
         f"{openai_api_base}/chat/completions",
         headers=headers,
         json={
-            "model": os.environ.get("MODEL", "gpt-4o-mini"),
+            "model": os.getenv("MODEL", "gpt-4o-mini"),
             "messages": [
                 {"role": "system", "content": output_system},
                 {"role": "user", "content": [readme, *images]},
@@ -333,7 +333,7 @@ if __name__ == "__main__":
             submissions.append([None, f"{head.owner}-{head.repo}", url])
         submissions = pd.DataFrame(submissions)
     # Else, the faculty will get all submissions from the Google Sheet and evaluate
-    elif os.environ.get("SUBMISSION_URL"):
+    elif os.getenv("SUBMISSION_URL"):
         submissions = pd.read_csv(os.environ["SUBMISSION_URL"])
     # Else, raise an error
     else:
@@ -355,12 +355,6 @@ if __name__ == "__main__":
             has_mit_license(row.id, evals)
             has_required_files(row.id, evals)
 
-            # Evaluate a random submission
-            dirs = ("goodreads", "happiness", "media")
-            dirs = [d for d in dirs if os.path.isdir(os.path.join(root, row.id, d))]
-            random.seed(row.id, version=2)
-            evaluate_output_quality(row.id, random.choice(dirs), evals)
-
             # Code evaluation
             evaluate_code_quality(row.id, evals)
 
@@ -369,14 +363,18 @@ if __name__ == "__main__":
             for dataset in sample_datasets:
                 try:
                     success.append(run_on_dataset(row.id, dataset, evals))
-                    evaluate_output_quality(row.id, os.path.join("eval", dataset), evals)
                 except Exception as e:
                     log(f"[blue]{row.id}[/blue] [red]FAIL[/red] {e}", last=True)
                     continue
-            if len(success) == len(sample_datasets):
-                evals.append(Eval(0.5, 0.5, "uv run autolysis *", "ran"))
-            else:
-                evals.append(Eval(0.0, 0.5, "uv run autolysis *", "failed"))
+            all_ran = 0.5 if len(success) == len(sample_datasets) else 0.0
+            evals.append(Eval(all_ran, 0.5, "uv run autolysis *", "ran" if all_ran else "failed"))
+
+            # Evaluate a random submission.
+            random.seed(row.id + os.getenv("AIPROXY_TOKEN", ""), version=2)
+            dirs = sample_datasets.keys()
+            dirs = [d for d in dirs if os.path.isdir(os.path.join(root, row.id, "eval", d))]
+            print(dirs)
+            evaluate_output_quality(row.id, random.choice(dirs), evals)
 
             result = pd.DataFrame(evals)
             result["id"] = row.id
