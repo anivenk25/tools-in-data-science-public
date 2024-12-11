@@ -150,7 +150,7 @@ def run_on_dataset(id: str, dataset: str, evals: list[Eval]):
     log(msg)
     result = run(cmd, check=False, capture_output=True, text=True, cwd=cwd)
     if result.returncode != 0:
-        evals.append(Eval(0.0, 0.5, msg, result.stderr))
+        evals.append(Eval(0.0, 0.5, f"uv run autolysis {dataset}", result.stderr))
         log(f"{msg} [red]FAIL[/red]: {result.stderr}", last=True)
         return False
     else:
@@ -373,8 +373,8 @@ if __name__ == "__main__":
             random.seed(row.id + os.getenv("AIPROXY_TOKEN", ""), version=2)
             dirs = sample_datasets.keys()
             dirs = [d for d in dirs if os.path.isdir(os.path.join(root, row.id, "eval", d))]
-            print(dirs)
-            evaluate_output_quality(row.id, random.choice(dirs), evals)
+            if len(dirs):
+                evaluate_output_quality(row.id, os.path.join("eval", random.choice(dirs)), evals)
 
             result = pd.DataFrame(evals)
             result["id"] = row.id
