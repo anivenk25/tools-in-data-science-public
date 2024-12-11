@@ -10,12 +10,14 @@
 # ///
 
 import argparse
+import base64
 import dotenv
 import glob
 import httpx
 import json
 import os
 import pandas as pd
+import random
 import shutil
 import sys
 from datetime import datetime, timedelta, timezone
@@ -33,6 +35,7 @@ console = Console()
 root = user_data_dir("tds-sep-24-project-2", "tds")
 HEAD = namedtuple("HEAD", ["owner", "repo", "branch"])
 Eval = namedtuple("Eval", ["marks", "total", "test", "reason"])
+Qual = namedtuple("Qual", ["group", "name", "description"])
 
 # Faculty evaluation of code and output will use LLM Foundry. Student evaluation will use AIProxy.
 dotenv.load_dotenv()
@@ -155,8 +158,38 @@ def run_on_dataset(id: str, dataset: str, evals: list[Eval]):
         return True
 
 
+def convert_to_qual(text: str) -> list[Qual]:
+    """Convert a text to a list of Qual attributes."""
+    quals = []
+    for line in text.split("\n"):
+        if not line.strip() or line.startswith("#"):
+            continue
+        group, name, description = line.split("|", 2)
+        quals.append(Qual(group, name, description))
+    return quals
+
+
+def get_schema(quals: list[Qual]) -> dict:
+    """Get the schema given qualities"""
+    properties = {}
+    for qual in quals:
+        properties[qual.name] = {
+            "type": "object",
+            "description": qual.description,
+            "properties": {"reasoning": {"type": "string"}, "answer": {"type": "boolean"}},
+            "required": ["reasoning", "answer"],
+            "additionalProperties": False,
+        }
+    schema = {
+        "type": "object",
+        "properties": properties,
+        "required": list(properties.keys()),
+        "additionalProperties": False,
+    }
+    return schema
+
+
 # Define the code quality evaluation attributes. WARNING: This is work in progress.
-Qual = namedtuple("Qual", ["group", "name", "description"])
 code_system = """
 You are an expert Python programmer. Evaluate the quality of this Python code. Respond as JSON.
 For each code quality attribute:
@@ -169,35 +202,13 @@ For each code quality attribute:
 # 1|uses_functions|Is the code broken down into functions APTLY, to avoid code duplication, reduce complexity, and improve re-use?
 # 1|consistent_coding_style|Is the ENTIRE code written in a consistent style?
 # 5|concise_prompts|Are prompts concise, entity-dense, and to the point, rather than unnecessarily verbose or repetitive?
-code_quality = []
-for line in os.environ.get("CODE_QUALITY", "").split("\n"):
-    if not line.strip() or line.startswith("#"):
-        continue
-    group, name, description = line.split("|", 2)
-    code_quality.append(Qual(group, name, description))
+code_quality = convert_to_qual(os.environ.get("CODE_QUALITY", ""))
 
 # Attributes belong to one of 7 groups (as defined in the project description). Count them.
 code_quality_group_counts = Counter(attribute.group for attribute in code_quality)
 
 # Define the JSON schema for the code quality evaluation. {attribute.name: {reasoning, answer}}
-# Put reasoning first to avoid rationalization bias.
-code_quality_properties = {
-    attribute.name: {
-        "type": "object",
-        "description": attribute.description,
-        "properties": {"reasoning": {"type": "string"}, "answer": {"type": "boolean"}},
-        "required": ["reasoning", "answer"],
-        "additionalProperties": False,
-    }
-    for attribute in code_quality
-}
-code_quality_schema = {
-    "type": "object",
-    "properties": code_quality_properties,
-    "required": list(code_quality_properties.keys()),
-    "additionalProperties": False,
-}
-json_schema = {"name": "quality", "strict": True, "schema": code_quality_schema}
+code_quality_schema = {"name": "quality", "strict": True, "schema": get_schema(code_quality)}
 
 
 def evaluate_code_quality(id: str, evals: list[Eval]):
@@ -220,7 +231,7 @@ def evaluate_code_quality(id: str, evals: list[Eval]):
                 {"role": "system", "content": code_system},
                 {"role": "user", "content": code},
             ],
-            "response_format": {"type": "json_schema", "json_schema": json_schema},
+            "response_format": {"type": "json_schema", "json_schema": code_quality_schema},
         },
         timeout=60,
     )
@@ -229,6 +240,66 @@ def evaluate_code_quality(id: str, evals: list[Eval]):
         total = 1.0 / code_quality_group_counts[attribute.group]
         ans = answers[attribute.name]
         evals.append(Eval(total if ans["answer"] else 0, total, attribute.name, ans["reasoning"]))
+
+
+# Define the output quality evaluation attributes. WARNING: This is work in progress.
+output_system = """
+You are an expert data analyst. You are analyzing a student analysis of a dataset.
+Evaluate the quality of this analysis. Respond as JSON.
+For each output quality attribute:
+- FIRST explain your reasoning, citing the analysis to provide evidence for and against the attribute.
+- THEN answer as a boolean. Use your judgement critically using your reasoning. Prefer false if unsure.
+"""
+
+# The criteria are mentioned in the project description. But the exact prompts are a secret.
+output_quality = convert_to_qual(os.environ.get("OUTPUT_QUALITY", ""))
+output_quality_group_counts = Counter(attribute.group for attribute in output_quality)
+output_quality_schema = {"name": "quality", "strict": True, "schema": get_schema(output_quality)}
+
+
+def evaluate_output_quality(id: str, path: str, evals: list[Eval]):
+    # Take the first README.md in the submission
+    readme_file = glob.glob(os.path.join(root, id, path, "**", "README.md"), recursive=True)
+    if len(readme_file) == 0:
+        evals.append(Eval(0.0, 1.0, f"{path}/README.md", "missing"))
+        return
+    with open(readme_file[0]) as f:
+        readme = f.read()
+
+    # Take the first 5 images in the submission
+    image_files = glob.glob(os.path.join(root, id, path, "**", "*.png"), recursive=True)[:5]
+    images = []
+    for image_file in image_files:
+        with open(image_file, "rb") as f:
+            image = base64.b64encode(f.read()).decode("utf-8")
+            images.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{image}", "detail": "low"},
+                }
+            )
+
+    # Evaluate the output quality
+    log(f"[blue]{id}[/blue] [yellow]OUTPUT QUALITY[/yellow] {path}")
+    result = httpx.post(
+        f"{openai_api_base}/chat/completions",
+        headers=headers,
+        json={
+            "model": os.environ.get("MODEL", "gpt-4o-mini"),
+            "messages": [
+                {"role": "system", "content": output_system},
+                {"role": "user", "content": [readme, *images]},
+            ],
+            "response_format": {"type": "json_schema", "json_schema": output_quality_schema},
+        },
+        timeout=60,
+    )
+    answers = json.loads(result.json()["choices"][0]["message"]["content"])
+    for attribute in output_quality:
+        total = 1.0 / output_quality_group_counts[attribute.group]
+        ans = answers[attribute.name]
+        attr = f"{path}: {attribute.name}"
+        evals.append(Eval(total if ans["answer"] else 0, total, attr, ans["reasoning"]))
 
 
 if __name__ == "__main__":
@@ -266,14 +337,25 @@ if __name__ == "__main__":
             has_mit_license(row.id, evals)
             has_required_files(row.id, evals)
 
+            # Evaluate a random submission
+            dirs = ("goodreads", "happiness", "media")
+            dirs = [d for d in dirs if os.path.isdir(os.path.join(root, row.id, d))]
+            random.seed(row.id, version=2)
+            evaluate_output_quality(row.id, random.choice(dirs), evals)
+
             # Code evaluation
             evaluate_code_quality(row.id, evals)
 
             # Submission: Run evaluation for each sample dataset
             success = []
             for dataset in sample_datasets:
-                success.append(run_on_dataset(row.id, dataset, evals))
-            if all(success):
+                try:
+                    # success.append(run_on_dataset(row.id, dataset, evals))
+                    evaluate_output_quality(row.id, os.path.join("eval", dataset), evals)
+                except Exception as e:
+                    log(f"[blue]{row.id}[/blue] [red]FAIL[/red] {e}", last=True)
+                    continue
+            if len(success) == len(sample_datasets):
                 evals.append(Eval(0.5, 0.5, "uv run autolysis *", "ran"))
             else:
                 evals.append(Eval(0.0, 0.5, "uv run autolysis *", "failed"))
